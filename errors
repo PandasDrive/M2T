@@ -1,0 +1,3 @@
+it's not zooming, we need to expand the spectrogram view down a bit and the letters need to be shown above the representations.. they're being ran over. i also shouldn't be able to click 
+  drag and draw multiple boxes, i just should get one box.. when i let go, it should zoom automatically. let's adjust the tuning feature to be if i middle click the scroll wheel, it will 
+  tune our signal to that frequency. we should have a live representation of where our cursor is regarding frequency on the right hand side as well..

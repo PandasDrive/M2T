@@ -35,8 +35,8 @@ This project uses a simple client-server architecture.
 *   **Backend (Server-Side):**
     *   **Framework:** **Flask** serves the web page, handles file uploads, and manages all API endpoints.
     *   **Audio Generation:** **Pydub** creates sine-wave-based audio segments for generating Morse code tones.
-    *   **Audio Analysis:** **Librosa** and **Scipy** load audio files, perform signal processing, and detect the signal envelope.
-    *   **Core Logic:** A custom **NumPy**-based algorithm analyzes "on" (mark) and "off" (space) durations to decode the binary signal into Morse elements, calculate WPM, and translate to text.
+    *   **Audio Analysis:** **Librosa** is used to load audio files. The core tone detection is performed by the **Goertzel algorithm** (via the `goertzel-fft` library), which is a highly efficient and noise-resistant method for detecting specific frequencies.
+    *   **Core Logic:** The application processes audio in small chunks, using the Goertzel algorithm on each chunk to determine if the target Morse code frequency is present. This produces a clean binary on/off signal, which is then analyzed to determine dot/dash/space timings, calculate WPM, and translate to text.
 
 *   **Frontend (Client-Side):**
     *   **HTML5/CSS3:** Provides a clean, single-column user interface with the decoder as the primary focus.

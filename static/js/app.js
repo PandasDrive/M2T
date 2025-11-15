@@ -1,33 +1,39 @@
+// This script assumes WaveSurfer and its plugins are loaded globally from the script tags in index.html
 document.addEventListener('DOMContentLoaded', () => {
-    // This script assumes WaveSurfer is loaded globally from the script tags in index.html
-
-    // --- Main Application Elements ---
+    // --- Get all DOM elements ---
     const fileInput = document.getElementById('file-input');
     const translateButton = document.getElementById('translate-button');
     const morseToTextError = document.getElementById('morse-to-text-error');
     const loadingSpinner = document.getElementById('loading-spinner');
-
-    // --- Data Panel Elements ---
     const wpmDisplay = document.getElementById('wpm-display');
     const liveCharDisplay = document.getElementById('live-char-display');
     const summaryText = document.getElementById('summary-text');
-
-    // --- Visualization & Playback ---
+    const signalStrengthDisplay = document.getElementById('signal-strength-display');
+    const frequencyHoverDisplay = document.getElementById('frequency-hover-display');
     const waveformContainer = document.getElementById('waveform-container');
+    const regionsCanvas = document.getElementById('regions-canvas');
     const spectrogramContainer = document.getElementById('spectrogram-container');
-    const playbackSpeed = document.getElementById('playback-speed');
+    const playbackSpeedSlider = document.getElementById('playback-speed');
     const playbackSpeedValue = document.getElementById('playback-speed-value');
     const fileNameDisplay = document.getElementById('file-name-display');
-
-    // --- Generator Elements ---
-    const textInput = document.getElementById('text-input');
+    const wpmSlider = document.getElementById('wpm-slider');
+    const wpmSliderValue = document.getElementById('wpm-slider-value');
+    const thresholdSlider = document.getElementById('threshold-slider');
+    const thresholdSliderValue = document.getElementById('threshold-slider-value');
+    const frequencyInput = document.getElementById('frequency-input');
+    const playPauseButton = document.getElementById('play-pause-button');
+    const resetZoomButton = document.getElementById('reset-zoom-button');
     const generateButton = document.getElementById('generate-button');
+    const textInput = document.getElementById('text-input');
     const textToMorseResults = document.getElementById('text-to-morse-results');
     const generatedAudioPlayer = document.getElementById('generated-audio-player');
     const textToMorseError = document.getElementById('text-to-morse-error');
 
     // --- State Variables ---
     let wavesurfer;
+    let currentAudioFile;
+    let wsRegions;
+    let decodedRegions = [];
 
     // --- Initial UI State ---
     loadingSpinner.style.display = 'none';
@@ -38,25 +44,55 @@ document.addEventListener('DOMContentLoaded', () => {
     fileInput.addEventListener('change', () => {
         if (fileInput.files.length > 0) {
             translateButton.disabled = false;
-            fileNameDisplay.textContent = fileInput.files[0].name;
-            summaryText.textContent = 'File loaded. Press "DECODE" to analyze.';
+            currentAudioFile = fileInput.files[0];
+            fileNameDisplay.textContent = currentAudioFile.name;
+            summaryText.textContent = 'File loaded. Press "DECODE / RE-TUNE" to analyze.';
+            wpmSlider.disabled = true;
+            thresholdSlider.disabled = true;
+            frequencyInput.disabled = true;
         } else {
             translateButton.disabled = true;
+            currentAudioFile = null;
         }
     });
 
-    translateButton.addEventListener('click', async () => {
-        const file = fileInput.files[0];
-        if (!file) {
-            showError(morseToTextError, 'Please select a .wav file.');
-            return;
-        }
+    translateButton.addEventListener('click', () => {
+        if (!currentAudioFile) return;
+        const wpm = wpmSlider.disabled ? null : wpmSlider.value;
+        const threshold = thresholdSlider.disabled ? 1.0 : thresholdSlider.value;
+        const frequency = frequencyInput.disabled ? null : frequencyInput.value;
+        handleDecodeRequest(currentAudioFile, wpm, threshold, frequency);
+    });
+
+    // --- Tuning & Control Listeners ---
+    wpmSlider.addEventListener('input', () => { wpmSliderValue.textContent = wpmSlider.value; });
+    wpmSlider.addEventListener('change', () => { translateButton.click(); });
+
+    thresholdSlider.addEventListener('input', () => { thresholdSliderValue.textContent = parseFloat(thresholdSlider.value).toFixed(2); });
+    thresholdSlider.addEventListener('change', () => { translateButton.click(); });
+
+    frequencyInput.addEventListener('change', () => { translateButton.click(); });
+
+    playbackSpeedSlider.addEventListener('input', () => {
+        const speed = parseFloat(playbackSpeedSlider.value);
+        playbackSpeedValue.textContent = speed.toFixed(2);
+        if (wavesurfer) wavesurfer.setPlaybackRate(speed);
+    });
+
+    playPauseButton.addEventListener('click', () => { if (wavesurfer) wavesurfer.playPause(); });
+    resetZoomButton.addEventListener('click', () => { if (wavesurfer) wavesurfer.zoom('auto'); });
+
+    // --- CORE DECODE & WAVESURFER LOGIC ---
+
+    async function handleDecodeRequest(file, wpm, threshold, frequency) {
         showLoading(true);
         hideError(morseToTextError);
-        resetTranslationUI();
-
+        
         const formData = new FormData();
         formData.append('audioFile', file);
+        if (wpm) formData.append('wpm', wpm);
+        if (threshold) formData.append('threshold', threshold);
+        if (frequency) formData.append('frequency', frequency);
 
         try {
             const response = await fetch('/translate-from-audio', { method: 'POST', body: formData });
@@ -64,7 +100,26 @@ document.addEventListener('DOMContentLoaded', () => {
             if (response.ok) {
                 summaryText.textContent = data.full_text || '[No text decoded]';
                 wpmDisplay.textContent = data.wpm || '--';
-                initializeWaveSurfer(URL.createObjectURL(file), data);
+                signalStrengthDisplay.textContent = data.avg_snr ? data.avg_snr.toFixed(2) : '--';
+
+                wpmSlider.disabled = false;
+                thresholdSlider.disabled = false;
+                frequencyInput.disabled = false;
+                wpmSlider.value = data.wpm;
+                wpmSliderValue.textContent = data.wpm;
+                thresholdSlider.value = data.threshold_factor;
+                thresholdSliderValue.textContent = data.threshold_factor.toFixed(2);
+                frequencyInput.value = data.frequency;
+
+                decodedRegions = data.events || [];
+
+                if (!wavesurfer) {
+                    initializeWaveSurfer(URL.createObjectURL(file));
+                } else {
+                    // If wavesurfer exists, just load the new audio
+                    await wavesurfer.load(URL.createObjectURL(file));
+                    drawRegions();
+                }
             } else {
                 showError(morseToTextError, data.error || 'An unknown error occurred.');
             }
@@ -73,17 +128,133 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             showLoading(false);
         }
-    });
+    }
 
-    playbackSpeed.addEventListener('input', () => {
-        const speed = parseFloat(playbackSpeed.value);
-        playbackSpeedValue.textContent = speed.toFixed(2);
-        if (wavesurfer) {
-            wavesurfer.setPlaybackRate(speed);
-        }
-    });
+    function initializeWaveSurfer(audioUrl) {
+        if (wavesurfer) wavesurfer.destroy();
+        
+        // Note: WaveSurfer.Regions is the correct name for the plugin when loaded globally
+        wsRegions = WaveSurfer.Regions.create();
 
-    // --- Generator Logic (unchanged) ---
+        wavesurfer = WaveSurfer.create({
+            container: '#waveform-container',
+            waveColor: '#9CA3AF',
+            progressColor: '#38BDF8',
+            height: 128,
+            url: audioUrl,
+            scrollParent: true, // Enable Shift+Scroll
+            plugins: [
+                WaveSurfer.Spectrogram.create({ container: '#spectrogram-container', labels: true, height: 256 }),
+                WaveSurfer.Timeline.create({ container: '#timeline-container' }),
+                wsRegions,
+            ],
+        });
+
+        // Enable drag-to-create regions for zooming
+        wsRegions.enableDragSelection({ color: 'rgba(255, 255, 255, 0.2)' });
+
+        // On region creation (drag-to-zoom), zoom to it then remove it
+        wavesurfer.on('region-updated', (region) => {
+            wavesurfer.zoom(region.start, region.end);
+            region.remove();
+        });
+        
+        wavesurfer.on('redraw', () => drawRegions());
+        wavesurfer.on('ready', () => {
+            wavesurfer.zoom('auto');
+            drawRegions();
+        });
+
+        // --- Interactive Spectrogram Logic ---
+        spectrogramContainer.addEventListener('mousemove', (e) => {
+            frequencyHoverDisplay.style.visibility = 'visible';
+            const rect = spectrogramContainer.getBoundingClientRect();
+            const y = e.clientY - rect.top;
+            const maxFreq = wavesurfer.options.sampleRate / 2;
+            const freq = Math.round(maxFreq * (1 - (y / rect.height)));
+            frequencyHoverDisplay.textContent = `${freq} HZ`;
+        });
+        spectrogramContainer.addEventListener('mouseleave', () => {
+            frequencyHoverDisplay.style.visibility = 'hidden';
+        });
+        spectrogramContainer.addEventListener('click', (e) => {
+            const rect = spectrogramContainer.getBoundingClientRect();
+            const y = e.clientY - rect.top;
+            const maxFreq = wavesurfer.options.sampleRate / 2;
+            const freq = Math.round(maxFreq * (1 - (y / rect.height)));
+            frequencyInput.value = freq;
+        });
+
+        // --- Playback and Live Display Logic ---
+        let lastChar = '';
+        wavesurfer.on('timeupdate', (currentTime) => {
+            const activeRegion = decodedRegions.find(r => currentTime >= r.start && currentTime < r.end);
+            const currentChar = activeRegion ? activeRegion.char : '_';
+            if (currentChar !== lastChar) {
+                liveCharDisplay.textContent = currentChar;
+                lastChar = currentChar;
+            }
+        });
+
+        wavesurfer.on('play', () => playPauseButton.textContent = 'PAUSE');
+        wavesurfer.on('pause', () => playPauseButton.textContent = 'PLAY');
+    }
+
+    // --- MANUAL REGION DRAWING ---
+    function drawRegions() {
+        if (!wavesurfer || !decodedRegions) return;
+        const ctx = regionsCanvas.getContext('2d');
+        const duration = wavesurfer.getDuration();
+        if (!duration) return;
+
+        const view = wavesurfer.getScroll();
+        const totalWidth = wavesurfer.getWrapper().scrollWidth;
+        const visibleWidth = waveformContainer.clientWidth;
+        
+        const start = view / totalWidth * duration;
+        const end = (view + visibleWidth) / totalWidth * duration;
+
+        ctx.canvas.width = visibleWidth;
+        ctx.canvas.height = regionsCanvas.height;
+        ctx.clearRect(0, 0, visibleWidth, regionsCanvas.height);
+
+        decodedRegions.forEach(region => {
+            // Only draw regions that are at least partially visible
+            if (region.end > start && region.start < end) {
+                const startPx = (region.start / duration) * totalWidth - view;
+                const endPx = (region.end / duration) * totalWidth - view;
+                const regionWidth = endPx - startPx;
+
+                // Draw the highlight
+                ctx.fillStyle = 'rgba(56, 189, 248, 0.2)';
+                ctx.fillRect(startPx, 0, regionWidth, regionsCanvas.height);
+
+                // Draw the text
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.font = '24px ' + getComputedStyle(document.documentElement).getPropertyValue('--font-mono');
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                // Only draw text if the region is wide enough
+                if (regionWidth > 20) {
+                    ctx.fillText(region.char, startPx + regionWidth / 2, regionsCanvas.height / 2);
+                }
+            }
+        });
+    }
+
+    // --- UTILITY & GENERATOR FUNCTIONS ---
+    function resetTranslationUI() {
+        summaryText.textContent = 'Awaiting audio file...';
+        liveCharDisplay.textContent = '_';
+        wpmDisplay.textContent = '--';
+        signalStrengthDisplay.textContent = '--';
+        frequencyHoverDisplay.textContent = '--';
+        decodedRegions = [];
+        if (wavesurfer) drawRegions();
+    }
+    function showLoading(isLoading) { loadingSpinner.style.display = isLoading ? 'flex' : 'none'; }
+    function showError(element, message) { element.textContent = message; }
+    function hideError(element) { element.textContent = ''; }
     generateButton.addEventListener('click', async () => {
         const text = textInput.value;
         if (!text) { showError(textToMorseError, 'Please enter some text.'); return; }
@@ -107,100 +278,4 @@ document.addEventListener('DOMContentLoaded', () => {
             showError(textToMorseError, `Network error: ${error.message}`);
         }
     });
-
-    // --- WAVESURFER & CORE FUNCTIONS ---
-
-    function initializeWaveSurfer(audioUrl, apiData) {
-        if (wavesurfer) {
-            wavesurfer.destroy();
-        }
-
-        // Note: WaveSurfer and its plugins are expected to be global variables
-        // loaded from the script tags in index.html
-        const wsRegions = WaveSurfer.Regions.create();
-
-        wavesurfer = WaveSurfer.create({
-            container: '#waveform-container',
-            waveColor: '#9CA3AF',
-            progressColor: '#38BDF8',
-            barWidth: 3,
-            barRadius: 2,
-            barGap: 2,
-            height: 128,
-            url: audioUrl,
-            plugins: [
-                WaveSurfer.Spectrogram.create({
-                    container: '#spectrogram-container',
-                    labels: true,
-                    height: 128,
-                }),
-                WaveSurfer.Timeline.create(),
-                wsRegions,
-            ],
-        });
-
-        wavesurfer.on('ready', () => {
-            const duration = wavesurfer.getDuration();
-            (apiData.events || []).forEach((event, index) => {
-                const nextEvent = (apiData.events || [])[index + 1];
-                const end = nextEvent ? nextEvent.time : duration;
-                wsRegions.addRegion({
-                    start: event.time,
-                    end: end,
-                    content: event.char,
-                    color: 'rgba(56, 189, 248, 0.1)',
-                    drag: false,
-                    resize: false,
-                });
-            });
-        });
-
-        let lastChar = '';
-        wavesurfer.on('timeupdate', (currentTime) => {
-            const activeRegion = wsRegions.getRegions().find(r => currentTime >= r.start && currentTime < r.end);
-            const currentChar = activeRegion ? activeRegion.content : '_';
-            if (currentChar !== lastChar) {
-                liveCharDisplay.textContent = currentChar;
-                lastChar = currentChar;
-            }
-        });
-
-        const playButton = document.querySelector('.panel-playback button') || createPlayButton();
-        playButton.onclick = () => wavesurfer.playPause();
-        wavesurfer.on('play', () => playButton.textContent = 'PAUSE');
-        wavesurfer.on('pause', () => playButton.textContent = 'PLAY');
-    }
-    
-    function createPlayButton() {
-        const button = document.createElement('button');
-        button.textContent = 'PLAY';
-        button.style.marginTop = '1rem';
-        const playbackPanel = document.querySelector('.panel-playback');
-        playbackPanel.insertBefore(button, playbackPanel.querySelector('.form-group'));
-        return button;
-    }
-
-    function resetTranslationUI() {
-        summaryText.textContent = 'Awaiting audio file...';
-        liveCharDisplay.textContent = '_';
-        wpmDisplay.textContent = '--';
-        playbackSpeed.value = 1.0;
-        playbackSpeedValue.textContent = '1.00';
-        if (wavesurfer) {
-            wavesurfer.destroy();
-        }
-        document.getElementById('waveform-container').innerHTML = '';
-        document.getElementById('spectrogram-container').innerHTML = '';
-    }
-
-    // --- UTILITY FUNCTIONS ---
-    function showLoading(isLoading) {
-        loadingSpinner.style.display = isLoading ? 'flex' : 'none';
-    }
-    function showError(element, message) {
-        element.textContent = message;
-    }
-    function hideError(element) {
-        element.textContent = '';
-    }
 });

@@ -79,12 +79,18 @@ def translate_from_audio():
         file.save(filepath)
         
         try:
-            # Call the processor to analyze the audio
-            # This is where the heavy lifting happens
-            analysis_data = morse_processor.process_audio_file(filepath)
-            
-            # Add the file path so the client can play it
-            analysis_data['filepath'] = f'/uploads/{filename}'
+            # Get tuning parameters from the form, with defaults
+            wpm_override = request.form.get('wpm', default=None, type=int)
+            threshold_factor = request.form.get('threshold', default=1.0, type=float)
+            frequency_override = request.form.get('frequency', default=None, type=int)
+
+            # Call the processor to analyze the audio with the new parameters
+            analysis_data = morse_processor.process_audio_file(
+                filepath, 
+                wpm_override=wpm_override, 
+                threshold_factor=threshold_factor,
+                frequency_override=frequency_override
+            )
             
             return jsonify(analysis_data)
             

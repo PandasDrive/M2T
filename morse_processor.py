@@ -1,12 +1,10 @@
 import numpy as np
 import librosa
-import librosa.display
-import scipy.signal
 from pydub import AudioSegment
 from pydub.generators import Sine
 
 # --- ---
-# == Part 1: Text-to-Morse Generation ==
+# == Part 1: Text-to-Morse Generation (Unchanged) ==
 # --- ---
 
 MORSE_CODE_DICT = {
@@ -16,44 +14,29 @@ MORSE_CODE_DICT = {
     'Y': '-.--', 'Z': '--..',
     '1': '.----', '2': '..---', '3': '...--', '4': '....-', '5': '.....',
     '6': '-....', '7': '--...', '8': '---..', '9': '----.', '0': '-----',
-    ' ': '/'  # Use / for space between words
+    ' ': '/'
 }
 
-# Standard Morse timing (WPM = Words Per Minute)
-# We'll base everything on the 'dot' duration.
-# A common WPM is 20. Dot duration = 1.2 / WPM
 WPM = 20
-DOT_DURATION_MS = 1200 / WPM  # Duration of one 'dot' in milliseconds
+DOT_DURATION_MS = 1200 / WPM
 DASH_DURATION_MS = 3 * DOT_DURATION_MS
-INTRA_CHAR_SPACE_MS = 1 * DOT_DURATION_MS # Space between dots/dashes in a char
-INTER_CHAR_SPACE_MS = 3 * DOT_DURATION_MS # Space between letters
-WORD_SPACE_MS = 7 * DOT_DURATION_MS       # Space between words
-
-# Audio properties
-TONE_FREQUENCY = 700  # Hz (A common frequency for Morse)
-SAMPLE_RATE = 44100   # Standard audio sample rate
+INTRA_CHAR_SPACE_MS = 1 * DOT_DURATION_MS
+INTER_CHAR_SPACE_MS = 3 * DOT_DURATION_MS
+WORD_SPACE_MS = 7 * DOT_DURATION_MS
+TONE_FREQUENCY = 700
+SAMPLE_RATE = 44100
 
 def generate_morse_audio(text, output_path):
-    """
-    Converts a string of text into a Morse code .wav file.
-    """
+    """Converts a string of text into a Morse code .wav file."""
     print(f"Generating Morse for: {text}")
-    
-    # Create silent segments
     dot_silence = AudioSegment.silent(duration=INTRA_CHAR_SPACE_MS)
     char_silence = AudioSegment.silent(duration=INTER_CHAR_SPACE_MS)
     word_silence = AudioSegment.silent(duration=WORD_SPACE_MS)
-    
-    # Create tone segments
     dot_tone = Sine(TONE_FREQUENCY).to_audio_segment(duration=DOT_DURATION_MS, volume=-10)
     dash_tone = Sine(TONE_FREQUENCY).to_audio_segment(duration=DASH_DURATION_MS, volume=-10)
-    
-    # Start with a bit of silence
     final_audio = AudioSegment.silent(duration=500)
-    
     for char in text.upper():
         if char == ' ':
-            # Add word space
             final_audio += word_silence
         elif char in MORSE_CODE_DICT:
             morse_symbols = MORSE_CODE_DICT[char]
@@ -62,187 +45,201 @@ def generate_morse_audio(text, output_path):
                     final_audio += dot_tone
                 elif symbol == '-':
                     final_audio += dash_tone
-                
-                # Add silence *between* symbols in a character
                 if i < len(morse_symbols) - 1:
                     final_audio += dot_silence
-            
-            # Add silence *after* the character
             final_audio += char_silence
-            
-    # Add a bit of silence at the end
     final_audio += AudioSegment.silent(duration=500)
-    
-    # Export the final audio to a .wav file
     final_audio.export(output_path, format="wav")
     print(f"File saved to {output_path}")
 
 # --- ---
-# == Part 2: Audio-to-Text Processing ==
+# == Part 2: Audio-to-Text Processing (Goertzel Implementation) ==
 # --- ---
 
-def process_audio_file(filepath):
+def goertzel_mag(frames, sample_rate, target_freq):
     """
-    Analyzes a .wav file and attempts to decode Morse code.
-    
-    This is a complex signal processing task. This implementation is
-    a *foundational algorithm* based on envelope detection.
-    
-    Returns a dictionary:
-    {
-        'full_text': '...', 
-        'events': [{'time': 0.5, 'char': 'S'}, ...],
-        'spectrogram_data': [...] 
-    }
+    A pure Python/NumPy implementation of the Goertzel algorithm.
+    This is used to detect the magnitude of a single frequency in a signal.
     """
-    print(f"Processing audio file: {filepath}")
-    
-    # 1. Load the audio file
-    y, sr = librosa.load(filepath, sr=None) # Load with original sample rate
-    
-    # 2. Get the envelope of the signal using a simpler moving average method
-    # This is more robust against filter ringing than a bandpass/hilbert transform.
-    
-    # Rectify the signal
-    y_abs = np.abs(y)
-    
-    # Create a moving average filter (low-pass) to get the envelope
-    # Window size should be larger than the tone's period but smaller than a dot.
-    # Tone period = 1/700Hz = ~1.4ms. Dot is 60ms. Let's use a 10ms window.
-    window_size = int(sr * 0.01)
-    moving_avg_filter = np.ones(window_size) / window_size
-    y_envelope = np.convolve(y_abs, moving_avg_filter, 'same')
+    num_frames = len(frames)
+    k = int(0.5 + (num_frames * target_freq) / sample_rate)
+    omega = (2.0 * np.pi * k) / num_frames
+    cosine = np.cos(omega)
+    sine = np.sin(omega)
+    coeff = 2.0 * cosine
 
-    # 3. Thresholding to find "on" (key down) and "off" (key up)
-    # For a clean signal, a simple percentage of the max amplitude works well.
-    # For noisy signals, this might need to be more adaptive.
-    if np.max(y_envelope) > 0:
-        threshold = np.max(y_envelope) * 0.5
+    q0, q1, q2 = 0, 0, 0
+    for frame in frames:
+        q0 = coeff * q1 - q2 + frame
+        q2 = q1
+        q1 = q0
+    
+    # Calculate the real and imaginary parts
+    real = (q1 - q2 * cosine)
+    imag = (q2 * sine)
+    
+    # Return the squared magnitude (power)
+    return real**2 + imag**2
+
+def process_audio_file(filepath, wpm_override=None, threshold_factor=1.0, frequency_override=None):
+    # --- 1. Find Peak Frequency using FFT ---
+    # This gives us a much better starting point than a hardcoded frequency
+    try:
+        y, sr = librosa.load(filepath, sr=SAMPLE_RATE)
+    except Exception as e:
+        return {'full_text': f'[ERROR: Could not load audio file: {e}]', 'wpm': 0, 'avg_snr': 0, 'events': [], 'binary_signal_data': []}
+
+    fft_result = np.fft.fft(y)
+    fft_freq = np.fft.fftfreq(len(y), d=1/sr)
+    
+    # Find the peak frequency in a sensible range (e.g., 300Hz to 1500Hz)
+    min_freq_idx = np.where(fft_freq > 300)[0][0]
+    max_freq_idx = np.where(fft_freq < 1500)[0][-1]
+    
+    peak_freq_idx = min_freq_idx + np.argmax(np.abs(fft_result[min_freq_idx:max_freq_idx]))
+    auto_detected_freq = fft_freq[peak_freq_idx]
+    
+    # Use the override if provided, otherwise use our auto-detected frequency
+    target_freq = frequency_override if frequency_override is not None else auto_detected_freq
+    print(f"Processing: {filepath}, WPM: {wpm_override}, Threshold: {threshold_factor}, Freq: {target_freq} (Auto-detected: {auto_detected_freq:.1f} Hz)")
+
+    # --- 2. Goertzel Analysis ---
+    chunk_duration_s = 0.01
+    chunk_size = int(sr * chunk_duration_s)
+    padding = chunk_size - (len(y) % chunk_size)
+    y_padded = np.pad(y, (0, padding), 'constant')
+    num_chunks = len(y_padded) // chunk_size
+    
+    magnitudes = [goertzel_mag(y_padded[i*chunk_size : (i+1)*chunk_size], sr, target_freq) for i in range(num_chunks)]
+    magnitudes = np.array(magnitudes)
+
+    # --- 3. Thresholding and Binary Signal Creation ---
+    if np.max(magnitudes) > 0:
+        # The base threshold is calculated automatically
+        base_threshold = (np.mean(magnitudes) + np.max(magnitudes)) / 2.5
+        # The user's factor adjusts this threshold
+        tuned_threshold = base_threshold * threshold_factor
+        
+        binary_signal = (magnitudes > tuned_threshold).astype(int)
+        on_signals = magnitudes[binary_signal == 1]
+        avg_snr = np.mean(on_signals) if len(on_signals) > 0 else 0.0
     else:
-        threshold = 0.0 # Handle silence
+        binary_signal = np.zeros_like(magnitudes)
+        avg_snr = 0.0
 
-    binary_signal = (y_envelope > threshold).astype(int)
+    # --- 4. Decode Binary Signal into Timings ---
+    # A simpler, more explicit run-length encoding implementation
+    durations = []
+    states = []
+    if len(binary_signal) > 0:
+        current_run_length = 1
+        current_run_state = binary_signal[0]
+        for i in range(1, len(binary_signal)):
+            if binary_signal[i] == current_run_state:
+                current_run_length += 1
+            else:
+                durations.append(current_run_length * chunk_duration_s)
+                states.append(current_run_state)
+                current_run_state = binary_signal[i]
+                current_run_length = 1
+        # Append the final run
+        durations.append(current_run_length * chunk_duration_s)
+        states.append(current_run_state)
     
-    # 5. Decode the binary signal (1s and 0s) into timings
-    # We need to find the lengths of 'on' (1s) and 'off' (0s) stretches
-    # This is a basic run-length encoding
-    
-    # Find indices where the signal changes
-    diff = np.diff(binary_signal, prepend=binary_signal[0], append=binary_signal[-1])
-    change_indices = np.where(diff != 0)[0]
-    
-    # Calculate durations between changes
-    durations = np.diff(change_indices) / sr  # Durations in seconds
-    states = binary_signal[change_indices[:-1]] # State (0 or 1) for each duration
-    
-    # 6. Classify durations into Morse elements (dot, dash, spaces)
-    # This is the second "fiddly" part. We need to guess the WPM (dot length).
-    
-    # Let's find all the "on" (mark) durations
+    durations = np.array(durations)
+    states = np.array(states)
+
+    # --- 5. Classify Durations and Decode ---
     mark_durations = durations[states == 1]
-    
     if len(mark_durations) < 2:
-        # Not enough data to decode
-        return {'full_text': '[ERROR: Not enough signal detected]', 'wpm': 0, 'events': [], 'spectrogram_data': []}
+        return {'full_text': '[ERROR: Not enough signal detected]', 'wpm': 0, 'avg_snr': avg_snr, 'events': [], 'binary_signal_data': binary_signal.tolist(), 'frequency': target_freq}
 
-    # A more robust clustering approach to find the dot length
-    # If there's a mix of long and short signals, separate them.
-    if np.mean(mark_durations) > 0 and np.std(mark_durations) > 0.02: # Check for meaningful variation
-        mean_mark = np.mean(mark_durations)
-        # Assume signals shorter than the mean are dots
-        dot_marks = [d for d in mark_durations if d < mean_mark]
-        if not dot_marks: # Handle cases with only dashes
-             dot_marks = [d / 3 for d in mark_durations] # Estimate dot length from dashes
+    # Use WPM override if provided, otherwise auto-detect
+    if wpm_override is not None:
+        wpm = wpm_override
+        estimated_dot_s = 1.2 / wpm
+        print(f"Using WPM override: {wpm}, Dot duration: {estimated_dot_s:.3f}s")
     else:
-        # If all marks are similar, assume they are all dots
-        dot_marks = mark_durations
+        # Robust auto-detection
+        if np.mean(mark_durations) > 0 and np.std(mark_durations) > 0.02:
+            mean_mark = np.mean(mark_durations)
+            dot_marks = [d for d in mark_durations if d < mean_mark]
+            if not dot_marks: dot_marks = [d / 3 for d in mark_durations]
+        else:
+            dot_marks = mark_durations
 
-    if not dot_marks:
-        return {'full_text': '[ERROR: Could not determine dot timing]', 'wpm': 0, 'events': [], 'spectrogram_data': []}
+        if not dot_marks:
+            return {'full_text': '[ERROR: Could not determine dot timing]', 'wpm': 0, 'avg_snr': avg_snr, 'events': [], 'binary_signal_data': binary_signal.tolist(), 'frequency': target_freq}
 
-    estimated_dot_s = np.median(dot_marks)
-    
-    if estimated_dot_s == 0:
-       return {'full_text': '[ERROR: No signal duration detected]', 'wpm': 0, 'events': [], 'spectrogram_data': []}
+        estimated_dot_s = np.median(dot_marks)
+        if estimated_dot_s == 0:
+           return {'full_text': '[ERROR: No signal duration detected]', 'wpm': 0, 'avg_snr': avg_snr, 'events': [], 'binary_signal_data': binary_signal.tolist(), 'frequency': target_freq}
+        
+        wpm = 1.2 / estimated_dot_s
+        print(f"Auto-detected dot duration: {estimated_dot_s:.3f}s, Calculated WPM: {wpm:.1f}")
 
-    # --- Calculate WPM ---
-    # The standard formula is WPM = 1.2 / dot_duration_in_seconds
-    wpm = 1.2 / estimated_dot_s
-    print(f"Estimated dot duration: {estimated_dot_s:.3f}s, Calculated WPM: {wpm:.1f}")
-
-    # Define timing windows based on this guess
-    # (These windows need to be tolerant of "swing" or "fist")
-    DOT_MAX = estimated_dot_s * 1.7 # Be a bit more tolerant
-    DASH_MIN = estimated_dot_s * 2.0 # Anything between 1.7 and 2.0 is ambiguous
-    
+    DOT_MAX = estimated_dot_s * 1.7
+    DASH_MIN = estimated_dot_s * 2.0
     CHAR_SPACE_MIN = estimated_dot_s * 2.0
     WORD_SPACE_MIN = estimated_dot_s * 5.0
     
-    # 7. Re-build the message
-    # We'll also build the timestamped events list you wanted
-    
-    # Invert the morse dictionary for decoding
     MORSE_DECODE_DICT = {v: k for k, v in MORSE_CODE_DICT.items()}
-    
-    decoded_text = ""
+    decoded_parts = []
     current_char = ""
-    current_time = 0.0
     timestamped_events = []
+    char_start_time = 0
 
+    time_cursor = 0.0
     for i, state in enumerate(states):
         duration_s = durations[i]
-        
-        if state == 1: # Key is ON (mark)
+        if state == 1: # Mark (tone)
+            if not current_char: # First mark of a new potential character
+                char_start_time = time_cursor
+            
             if duration_s < DOT_MAX:
                 current_char += "."
             elif duration_s > DASH_MIN:
                 current_char += "-"
-            # Else: ambiguous duration, ignore it (or mark with '?')
-            
-        else: # Key is OFF (space)
-            # Decode the completed character after a space
-            if current_char:
-                if duration_s > WORD_SPACE_MIN:
-                    # End of a word
-                    letter = MORSE_DECODE_DICT.get(current_char, '?')
-                    decoded_text += letter + " "
-                    timestamped_events.append({'time': current_time, 'char': letter})
-                    current_char = ""
-                    
-                elif duration_s > CHAR_SPACE_MIN:
-                    # End of a character
-                    letter = MORSE_DECODE_DICT.get(current_char, '?')
-                    decoded_text += letter
-                    timestamped_events.append({'time': current_time, 'char': letter})
-                    current_char = ""
+        else: # Space
+            if current_char and duration_s > CHAR_SPACE_MIN:
+                letter = MORSE_DECODE_DICT.get(current_char, '?')
+                decoded_parts.append(letter)
                 
-            # Else: it's just an intra-character space, do nothing
-            
-        current_time += duration_s
+                # The character region starts at the beginning of its first mark
+                # and ends at the end of its last mark (the start of the current space).
+                timestamped_events.append({
+                    'start': char_start_time,
+                    'end': time_cursor,
+                    'char': letter
+                })
+                
+                if duration_s > WORD_SPACE_MIN:
+                    decoded_parts.append(' ')
+                
+                current_char = ""
+        time_cursor += duration_s
 
-    # Handle any remaining character at the end of the transmission
+    # Add the final character if it exists at the end of the file
     if current_char:
         letter = MORSE_DECODE_DICT.get(current_char, '?')
-        decoded_text += letter
-        timestamped_events.append({'time': current_time, 'char': letter})
-
-    # 8. Generate Spectrogram data for visualization
-    # We will use the *original* unfiltered signal for a truer visual
-    S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=2000)
-    S_dB = librosa.power_to_db(S, ref=np.max)
+        decoded_parts.append(letter)
+        timestamped_events.append({
+            'start': char_start_time,
+            'end': time_cursor,
+            'char': letter
+        })
     
-    # We need to send this to the client in a JSON-friendly way
-    # Let's send a *downsampled* version to avoid sending huge arrays
-    # This is just a placeholder; a real implementation would be more clever
-    spectrogram_data = S_dB[::4, ::4].tolist() # Sample every 4th value
+    # Assemble the final string from the parts
+    final_text = "".join(decoded_parts)
     
-    
-    print(f"Decoded text: {decoded_text}")
+    print(f"Decoded text: {final_text}")
 
     return {
-        'full_text': decoded_text.strip(),
+        'full_text': final_text,
         'wpm': round(wpm, 1),
+        'threshold_factor': threshold_factor,
+        'frequency': round(target_freq),
+        'avg_snr': avg_snr,
         'events': timestamped_events,
-        'spectrogram_data': spectrogram_data, # This is a placeholder for now
-        'binary_signal_data': binary_signal.tolist()[::100] # Also for debugging
+        'binary_signal_data': binary_signal.tolist()
     }

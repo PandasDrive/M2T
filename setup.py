@@ -45,7 +45,13 @@ def install_requirements():
         print("Please make sure it's in the same directory as setup.py.")
         sys.exit(1)
 
-    print(f"Installing dependencies from {requirements_file}...")
+    print("--- Ensuring pip is up-to-date ---")
+    try:
+        subprocess.check_call([get_python_path(), "-m", "pip", "install", "--upgrade", "pip"])
+    except subprocess.CalledProcessError as e:
+        print(f"Could not upgrade pip: {e}. Continuing with installation...")
+
+    print(f"--- Installing dependencies from {requirements_file} ---")
     try:
         # We run pip as a module of the venv's python to ensure correctness
         subprocess.check_call([get_python_path(), "-m", "pip", "install", "-r", requirements_file])
