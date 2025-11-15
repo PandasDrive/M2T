@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Morse Code Processor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>Morse Code Processor</h1>
+    </header>
+    
+    <main class="container">
+        
+        <section class="card">
+            <h2>Morse to Text Decoder</h2>
+            <div class="form-group">
+                <label for="file-input">Upload .wav File:</label>
+                <input type="file" id="file-input" accept=".wav">
+            </div>
+            <button id="translate-button">Translate Audio</button>
+            
+            <div id="morse-to-text-results" class="results-area hidden">
+                <h3>Translation Results</h3>
+                
+                <div class="player-container">
+                    <p><strong>Playing file:</strong> <span id="file-name-display"></span></p>
+                    <audio id="uploaded-audio-player" controls></audio>
+                </div>
+
+                <p><strong>Detected Speed:</strong> <span id="wpm-display">0</span> WPM</p>
+                
+                <div class="live-display">
+                    <div id="visualizer-placeholder">
+                        <canvas id="waveform-canvas"></canvas>
+                    </div>
+                    <div id="live-char-display" class="live-char">
+                        </div>
+                </div>
+                
+                <div class="summary-area">
+                    <h4>Full Translated Text:</h4>
+                    <div id="summary-text" class="summary-box">
+                        </div>
+                </div>
+                
+                <p id="morse-to-text-error" class="error-message"></p>
+            </div>
+        </section>
+
+        <details class="card">
+            <summary><h2>Text to Morse Generator (for Testing)</h2></summary>
+            <div class="form-group">
+                <label for="text-input">Enter Text:</label>
+                <textarea id="text-input" rows="4" placeholder="Hello world"></textarea>
+            </div>
+            <button id="generate-button">Generate Audio</button>
+            
+            <div id="text-to-morse-results" class="results-area hidden">
+                <h3>Generated Audio:</h3>
+                <audio id="generated-audio-player" controls></audio>
+                <p id="text-to-morse-error" class="error-message"></p>
+            </div>
+        </details>
+
+    </main>
+    
+    <div id="loading-spinner" class="spinner-overlay hidden">
+        <div class="spinner"></div>
+        <p>Processing audio...</p>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
