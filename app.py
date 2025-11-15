@@ -1,21 +1,27 @@
 import os
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, Response
 from werkzeug.utils import secure_filename
+from datetime import datetime
 import morse_processor  # This is our custom logic file
+import audio_preprocessor  # Audio preprocessing module
+import export_utils  # Export utilities
 
 # --- Configuration ---
 UPLOAD_FOLDER = 'uploads'
 GENERATED_FOLDER = 'generated_audio'
-ALLOWED_EXTENSIONS = {'wav'}
+TEMP_FOLDER = 'temp'
+ALLOWED_EXTENSIONS = {'wav', 'mp3', 'flac', 'ogg', 'm4a', 'aac'}
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['GENERATED_FOLDER'] = GENERATED_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB max upload size
+app.config['TEMP_FOLDER'] = TEMP_FOLDER
 
 # --- Ensure directories exist ---
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(GENERATED_FOLDER, exist_ok=True)
+os.makedirs(TEMP_FOLDER, exist_ok=True)
 
 def allowed_file(filename):
     """Checks if the uploaded file has an allowed extension."""
@@ -63,43 +69,115 @@ def translate_to_morse():
 def translate_from_audio():
     """
     Handles audio-to-text translation.
-    Takes a .wav file upload and returns JSON with translation data.
+    Supports multiple audio formats (WAV, MP3, FLAC, OGG, M4A, AAC).
+    Applies preprocessing if requested.
     """
     if 'audioFile' not in request.files:
         return jsonify({'error': 'No file part in the request.'}), 400
     
     file = request.files['audioFile']
     
-    if file.filename == '':
+    if not file or not file.filename or file.filename == '':
         return jsonify({'error': 'No file selected.'}), 400
+    
+    # Check if file extension is allowed
+    filename_raw = file.filename
+    if not filename_raw or '.' not in filename_raw:
+        return jsonify({'error': 'Invalid filename or file extension.'}), 400
+    
+    file_ext = filename_raw.rsplit('.', 1)[1].lower()
+    if file_ext not in ALLOWED_EXTENSIONS:
+        return jsonify({'error': f'Invalid file type. Allowed formats: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
+    
+    # Type assertion: after checks above, filename_raw is guaranteed to be a string
+    filename = secure_filename(str(filename_raw))
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+    
+    # Convert to WAV if necessary
+    converted_filepath = filepath
+    temp_wav_path = None
+    
+    try:
+        if file_ext != 'wav':
+            # Convert to WAV format
+            base_name = os.path.splitext(filename)[0]
+            temp_wav_path = os.path.join(app.config.get('TEMP_FOLDER', TEMP_FOLDER), f"{base_name}_temp.wav")
+            converted_filepath = audio_preprocessor.convert_audio_to_wav(filepath, temp_wav_path)
         
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        # Get tuning parameters from the form
+        wpm_override = request.form.get('wpm', default=None, type=int)
+        threshold_factor = request.form.get('threshold', default=1.0, type=float)
+        frequency_override = request.form.get('frequency', default=None, type=int)
         
-        try:
-            # Get tuning parameters from the form, with defaults
-            wpm_override = request.form.get('wpm', default=None, type=int)
-            threshold_factor = request.form.get('threshold', default=1.0, type=float)
-            frequency_override = request.form.get('frequency', default=None, type=int)
-
-            # Call the processor to analyze the audio with the new parameters
-            analysis_data = morse_processor.process_audio_file(
-                filepath, 
-                wpm_override=wpm_override, 
-                threshold_factor=threshold_factor,
-                frequency_override=frequency_override
+        # Get preprocessing options
+        preprocessing_config = {}
+        if request.form.get('preprocess', 'false').lower() == 'true':
+            preprocessing_config = {
+                'remove_dc': request.form.get('remove_dc', 'true').lower() == 'true',
+                'apply_bandpass': request.form.get('apply_bandpass', 'false').lower() == 'true',
+                'bandpass_low': float(request.form.get('bandpass_low', 300)),
+                'bandpass_high': float(request.form.get('bandpass_high', 1500)),
+                'apply_notch': request.form.get('apply_notch', 'false').lower() == 'true',
+                'notch_freq': float(request.form.get('notch_freq', 60.0)),
+                'apply_highpass': request.form.get('apply_highpass', 'false').lower() == 'true',
+                'highpass_cutoff': float(request.form.get('highpass_cutoff', 50)),
+                'apply_lowpass': request.form.get('apply_lowpass', 'false').lower() == 'true',
+                'lowpass_cutoff': float(request.form.get('lowpass_cutoff', 2000)),
+                'normalize': request.form.get('normalize', 'peak') or None,
+                'noise_reduction': request.form.get('noise_reduction', 'false').lower() == 'true',
+                'noise_reduction_db': float(request.form.get('noise_reduction_db', 6.0)),
+            }
+        
+        # Apply preprocessing if configured
+        if preprocessing_config and any(preprocessing_config.values()):
+            # Load audio, preprocess, save temporary preprocessed file
+            import librosa
+            import numpy as np
+            import soundfile as sf
+            
+            audio, sr = librosa.load(converted_filepath, sr=None)
+            processed_audio = audio_preprocessor.preprocess_audio(audio, sr, preprocessing_config)
+            
+            # Save preprocessed audio temporarily
+            preprocessed_path = os.path.join(
+                app.config.get('TEMP_FOLDER', TEMP_FOLDER), 
+                f"{os.path.splitext(os.path.basename(converted_filepath))[0]}_preprocessed.wav"
             )
-            
-            return jsonify(analysis_data)
-            
-        except Exception as e:
-            print(f"Error during audio-to-text conversion: {e}")
-            return jsonify({'error': str(e)}), 500
-            
-    else:
-        return jsonify({'error': 'Invalid file type. Only .wav is allowed.'}), 400
+            sf.write(preprocessed_path, processed_audio, sr)
+            converted_filepath = preprocessed_path
+
+        # Call the processor to analyze the audio
+        analysis_data = morse_processor.process_audio_file(
+            converted_filepath, 
+            wpm_override=wpm_override, 
+            threshold_factor=threshold_factor,
+            frequency_override=frequency_override,
+            preprocess_config=None  # Already preprocessed if needed
+        )
+        
+        # Clean up temporary files
+        if temp_wav_path and os.path.exists(temp_wav_path):
+            try:
+                os.remove(temp_wav_path)
+            except:
+                pass
+        
+        return jsonify(analysis_data)
+        
+    except Exception as e:
+        print(f"Error during audio-to-text conversion: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Clean up on error
+        if temp_wav_path and os.path.exists(temp_wav_path):
+            try:
+                os.remove(temp_wav_path)
+            except:
+                pass
+        
+        return jsonify({'error': str(e)}), 500
 
 # --- ---
 # == File Serving Routes ==
@@ -114,6 +192,56 @@ def serve_uploaded_file(filename):
 def serve_generated_file(filename):
     """Serves files from the GENERATED_FOLDER."""
     return send_from_directory(app.config['GENERATED_FOLDER'], filename)
+
+# --- ---
+# == Export Routes ==
+# --- ---
+
+@app.route('/export-decoded', methods=['POST'])
+def export_decoded():
+    """
+    Export decoded Morse code text in various formats.
+    Accepts JSON with 'text', 'events', 'metadata', and 'format' (txt, csv, json, formatted).
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided.'}), 400
+    
+    decoded_text = data.get('text', '')
+    events = data.get('events', [])
+    metadata = data.get('metadata', {})
+    format_type = data.get('format', 'txt').lower()
+    
+    if not decoded_text:
+        return jsonify({'error': 'No text to export.'}), 400
+    
+    try:
+        if format_type == 'txt':
+            content = export_utils.export_to_txt(decoded_text, metadata)
+            mimetype = 'text/plain'
+            filename = f'm2t_decode_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
+        elif format_type == 'csv':
+            content = export_utils.export_to_csv(decoded_text, events, metadata)
+            mimetype = 'text/csv'
+            filename = f'm2t_decode_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+        elif format_type == 'json':
+            content = export_utils.export_to_json(decoded_text, events, metadata)
+            mimetype = 'application/json'
+            filename = f'm2t_decode_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+        elif format_type == 'formatted':
+            content = export_utils.export_to_formatted_text(decoded_text, events, metadata)
+            mimetype = 'text/plain'
+            filename = f'm2t_decode_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
+        else:
+            return jsonify({'error': f'Invalid format: {format_type}. Supported: txt, csv, json, formatted'}), 400
+        
+        response = Response(content, mimetype=mimetype)
+        response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+        return response
+        
+    except Exception as e:
+        print(f"Error during export: {e}")
+        return jsonify({'error': str(e)}), 500
 
 # --- ---
 # == Main execution ==

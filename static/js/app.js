@@ -28,16 +28,69 @@ document.addEventListener('DOMContentLoaded', () => {
     const textToMorseResults = document.getElementById('text-to-morse-results');
     const generatedAudioPlayer = document.getElementById('generated-audio-player');
     const textToMorseError = document.getElementById('text-to-morse-error');
+    
+    // Preprocessing controls
+    const preprocessEnabled = document.getElementById('preprocess-enabled');
+    const preprocessingOptions = document.getElementById('preprocessing-options');
+    const removeDc = document.getElementById('remove-dc');
+    const applyHighpass = document.getElementById('apply-highpass');
+    const highpassCutoff = document.getElementById('highpass-cutoff');
+    const highpassCutoffValue = document.getElementById('highpass-cutoff-value');
+    const applyBandpass = document.getElementById('apply-bandpass');
+    const bandpassLow = document.getElementById('bandpass-low');
+    const bandpassLowValue = document.getElementById('bandpass-low-value');
+    const bandpassHigh = document.getElementById('bandpass-high');
+    const bandpassHighValue = document.getElementById('bandpass-high-value');
+    const applyNotch = document.getElementById('apply-notch');
+    const notchFreq = document.getElementById('notch-freq');
+    const notchFreqValue = document.getElementById('notch-freq-value');
+    const applyLowpass = document.getElementById('apply-lowpass');
+    const lowpassCutoff = document.getElementById('lowpass-cutoff');
+    const lowpassCutoffValue = document.getElementById('lowpass-cutoff-value');
+    const noiseReduction = document.getElementById('noise-reduction');
+    const noiseReductionDb = document.getElementById('noise-reduction-db');
+    const noiseReductionDbValue = document.getElementById('noise-reduction-db-value');
+    const normalize = document.getElementById('normalize');
+    
+    // Export controls
+    const exportTxtBtn = document.getElementById('export-txt-btn');
+    const exportCsvBtn = document.getElementById('export-csv-btn');
+    const exportJsonBtn = document.getElementById('export-json-btn');
+    const exportFormattedBtn = document.getElementById('export-formatted-btn');
 
     // --- State Variables ---
     let wavesurfer;
     let currentAudioFile;
     let wsRegions;
     let decodedRegions = [];
+    let currentDecodedData = null; // Store decoded data for export
 
     // --- Initial UI State ---
     loadingSpinner.style.display = 'none';
     translateButton.disabled = true;
+    
+    // --- Collapsible Panels ---
+    const panelHeaders = document.querySelectorAll('.panel-header');
+    panelHeaders.forEach(header => {
+        header.addEventListener('click', () => {
+            const panel = header.closest('.collapsible-panel');
+            if (panel) {
+                panel.classList.toggle('collapsed');
+                const toggle = header.querySelector('.panel-toggle');
+                const content = panel.querySelector('.panel-content');
+                
+                if (panel.classList.contains('collapsed')) {
+                    toggle.textContent = '▶';
+                    content.style.display = 'none';
+                } else {
+                    toggle.textContent = '▼';
+                    content.style.display = 'block';
+                    // Force reflow for smooth animation
+                    content.style.maxHeight = content.scrollHeight + 'px';
+                }
+            }
+        });
+    });
 
     // --- EVENT LISTENERS ---
 
@@ -63,6 +116,70 @@ document.addEventListener('DOMContentLoaded', () => {
         const frequency = frequencyInput.disabled ? null : frequencyInput.value;
         handleDecodeRequest(currentAudioFile, wpm, threshold, frequency);
     });
+    
+    // Preprocessing controls - make sure options show immediately with no lag
+    if (preprocessEnabled && preprocessingOptions) {
+        // Prevent checkbox click from bubbling to panel header
+        preprocessEnabled.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+        
+        preprocessEnabled.addEventListener('change', (e) => {
+            e.stopPropagation(); // Prevent event bubbling
+            const preprocessingPanel = document.querySelector('.panel-preprocessing');
+            const panelContent = preprocessingPanel?.querySelector('.panel-content');
+            
+            if (e.target.checked) {
+                // First, ensure panel is expanded and visible immediately (synchronously, no delays)
+                if (preprocessingPanel) {
+                    // Remove collapsed class
+                    preprocessingPanel.classList.remove('collapsed');
+                    
+                    // Update toggle icon
+                    const header = preprocessingPanel.querySelector('.panel-header');
+                    const toggle = header?.querySelector('.panel-toggle');
+                    if (toggle) toggle.textContent = '▼';
+                    
+                    // Force panel content to be visible - override all hiding styles
+                    if (panelContent) {
+                        // Clear all styles that might hide it
+                        panelContent.style.cssText = 'display: block !important; opacity: 1 !important; visibility: visible !important; max-height: none !important; overflow: visible !important; margin-top: 1.5rem;';
+                    }
+                }
+                
+                // Show preprocessing options immediately (synchronously)
+                preprocessingOptions.style.cssText = 'display: block !important; opacity: 1 !important; visibility: visible !important;';
+                
+            } else {
+                preprocessingOptions.style.display = 'none';
+            }
+        });
+    }
+    
+    highpassCutoff.addEventListener('input', (e) => {
+        highpassCutoffValue.textContent = e.target.value;
+    });
+    bandpassLow.addEventListener('input', (e) => {
+        bandpassLowValue.textContent = e.target.value;
+    });
+    bandpassHigh.addEventListener('input', (e) => {
+        bandpassHighValue.textContent = e.target.value;
+    });
+    notchFreq.addEventListener('input', (e) => {
+        notchFreqValue.textContent = e.target.value;
+    });
+    lowpassCutoff.addEventListener('input', (e) => {
+        lowpassCutoffValue.textContent = e.target.value;
+    });
+    noiseReductionDb.addEventListener('input', (e) => {
+        noiseReductionDbValue.textContent = parseFloat(e.target.value).toFixed(1);
+    });
+    
+    // Export handlers
+    exportTxtBtn.addEventListener('click', () => exportDecoded('txt'));
+    exportCsvBtn.addEventListener('click', () => exportDecoded('csv'));
+    exportJsonBtn.addEventListener('click', () => exportDecoded('json'));
+    exportFormattedBtn.addEventListener('click', () => exportDecoded('formatted'));
 
     // --- Tuning & Control Listeners ---
     wpmSlider.addEventListener('input', () => { wpmSliderValue.textContent = wpmSlider.value; });
@@ -93,6 +210,36 @@ document.addEventListener('DOMContentLoaded', () => {
         if (wpm) formData.append('wpm', wpm);
         if (threshold) formData.append('threshold', threshold);
         if (frequency) formData.append('frequency', frequency);
+        
+        // Add preprocessing parameters
+        if (preprocessEnabled && preprocessEnabled.checked) {
+            formData.append('preprocess', 'true');
+            formData.append('remove_dc', removeDc.checked ? 'true' : 'false');
+            if (applyHighpass.checked) {
+                formData.append('apply_highpass', 'true');
+                formData.append('highpass_cutoff', highpassCutoff.value);
+            }
+            if (applyBandpass.checked) {
+                formData.append('apply_bandpass', 'true');
+                formData.append('bandpass_low', bandpassLow.value);
+                formData.append('bandpass_high', bandpassHigh.value);
+            }
+            if (applyNotch.checked) {
+                formData.append('apply_notch', 'true');
+                formData.append('notch_freq', notchFreq.value);
+            }
+            if (applyLowpass.checked) {
+                formData.append('apply_lowpass', 'true');
+                formData.append('lowpass_cutoff', lowpassCutoff.value);
+            }
+            if (noiseReduction.checked) {
+                formData.append('noise_reduction', 'true');
+                formData.append('noise_reduction_db', noiseReductionDb.value);
+            }
+            if (normalize.value) {
+                formData.append('normalize', normalize.value);
+            }
+        }
 
         try {
             const response = await fetch('/translate-from-audio', { method: 'POST', body: formData });
@@ -112,6 +259,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 frequencyInput.value = data.frequency;
 
                 decodedRegions = data.events || [];
+                
+                // Store decoded data for export
+                currentDecodedData = {
+                    text: data.full_text || '',
+                    events: data.events || [],
+                    metadata: {
+                        wpm: data.wpm,
+                        frequency: data.frequency,
+                        threshold_factor: data.threshold_factor,
+                        avg_snr: data.avg_snr
+                    }
+                };
+                
+                // Enable export buttons
+                exportTxtBtn.disabled = false;
+                exportCsvBtn.disabled = false;
+                exportJsonBtn.disabled = false;
+                exportFormattedBtn.disabled = false;
 
                 if (!wavesurfer) {
                     initializeWaveSurfer(URL.createObjectURL(file));
@@ -250,11 +415,56 @@ document.addEventListener('DOMContentLoaded', () => {
         signalStrengthDisplay.textContent = '--';
         frequencyHoverDisplay.textContent = '--';
         decodedRegions = [];
+        currentDecodedData = null;
+        
+        // Disable export buttons
+        exportTxtBtn.disabled = true;
+        exportCsvBtn.disabled = true;
+        exportJsonBtn.disabled = true;
+        exportFormattedBtn.disabled = true;
+        
         if (wavesurfer) drawRegions();
     }
     function showLoading(isLoading) { loadingSpinner.style.display = isLoading ? 'flex' : 'none'; }
     function showError(element, message) { element.textContent = message; }
     function hideError(element) { element.textContent = ''; }
+    
+    async function exportDecoded(format) {
+        if (!currentDecodedData || !currentDecodedData.text) {
+            alert('No decoded text to export.');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/export-decoded', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    text: currentDecodedData.text,
+                    events: currentDecodedData.events,
+                    metadata: currentDecodedData.metadata,
+                    format: format
+                })
+            });
+            
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || `m2t_decode.${format === 'formatted' ? 'txt' : format}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            } else {
+                const data = await response.json();
+                alert(`Export failed: ${data.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            alert(`Export error: ${error.message}`);
+        }
+    }
     generateButton.addEventListener('click', async () => {
         const text = textInput.value;
         if (!text) { showError(textToMorseError, 'Please enter some text.'); return; }

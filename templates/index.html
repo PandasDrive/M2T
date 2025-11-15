@@ -27,25 +27,34 @@
                 </div>
                 <div id="spectrogram-container"></div>
                 <div id="viz-footer">
-                    <span>Scroll: Shift + Mouse Wheel</span>
-                    <span id="frequency-hover-display" style="visibility: hidden;"></span>
-                    <span>Zoom: Drag Selection</span>
+                    <span>Scroll: <kbd>Shift</kbd>/<kbd>Ctrl</kbd> + <kbd>Wheel</kbd> (horizontal)</span>
+                    <span id="frequency-hover-display" class="metric-value" style="visibility: hidden; font-size: 0.9rem;">-- HZ</span>
+                    <span>Zoom: Drag Selection | <kbd>Shift</kbd> + <kbd>+/-</kbd> | <kbd>R</kbd> to reset</span>
                 </div>
             </div>
 
             <!-- RIGHT COLUMN: SIDEBAR -->
             <div class="grid-sidebar">
-                <div class="grid-panel panel-controls">
-                    <h3>CONTROLS</h3>
-                    <div class="form-group">
-                        <label for="file-input">1. LOAD AUDIO FILE (.wav)</label>
-                        <input type="file" id="file-input" accept=".wav">
+                <div class="grid-panel panel-controls collapsible-panel">
+                    <h3 class="panel-header" data-panel="controls">
+                        <span class="panel-title">CONTROLS</span>
+                        <span class="panel-toggle">▼</span>
+                    </h3>
+                    <div class="panel-content" data-content="controls">
+                        <div class="form-group">
+                            <label for="file-input">1. LOAD AUDIO FILE (WAV, MP3, FLAC, OGG, M4A, AAC)</label>
+                            <input type="file" id="file-input" accept=".wav,.mp3,.flac,.ogg,.m4a,.aac">
+                        </div>
+                        <button id="translate-button" disabled>DECODE / RE-TUNE</button>
+                        <p id="morse-to-text-error" class="error-message"></p>
                     </div>
-                    <button id="translate-button" disabled>DECODE / RE-TUNE</button>
-                    <p id="morse-to-text-error" class="error-message"></p>
                 </div>
-                <div class="grid-panel panel-data">
-                    <h3>DECODED DATA</h3>
+                <div class="grid-panel panel-data collapsible-panel">
+                    <h3 class="panel-header" data-panel="data">
+                        <span class="panel-title">DECODED DATA</span>
+                        <span class="panel-toggle">▼</span>
+                    </h3>
+                    <div class="panel-content" data-content="data">
                     <div class="data-metrics">
                         <div class="metric-item" data-tooltip="Words Per Minute, estimated from dot length.">
                             <span class="metric-value" id="wpm-display">--</span>
@@ -66,20 +75,36 @@
                                         </div>                    <div class="summary-area">
                         <label for="summary-text">FULL TRANSCRIPTION</label>
                         <div id="summary-text" class="summary-box">Awaiting audio file...</div>
+                        <div class="export-controls" style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                            <button id="export-txt-btn" disabled>Export TXT</button>
+                            <button id="export-csv-btn" disabled>Export CSV</button>
+                            <button id="export-json-btn" disabled>Export JSON</button>
+                            <button id="export-formatted-btn" disabled>Export Formatted</button>
+                        </div>
+                    </div>
                     </div>
                 </div>
-                <div class="grid-panel panel-playback">
-                    <h3>PLAYBACK</h3>
-                    <p id="file-name-display">No file loaded</p>
-                    <button id="play-pause-button">PLAY</button>
-                    <button id="reset-zoom-button" style="margin-top: 0.5rem;">Reset View</button>
-                    <div class="form-group" data-tooltip="Adjust audio playback speed.">
-                        <label for="playback-speed">Playback Speed: <span id="playback-speed-value">1.0</span>x</label>
-                        <input type="range" id="playback-speed" min="0.25" max="2.0" value="1.0" step="0.25">
+                <div class="grid-panel panel-playback collapsible-panel collapsed">
+                    <h3 class="panel-header" data-panel="playback">
+                        <span class="panel-title">PLAYBACK</span>
+                        <span class="panel-toggle">▶</span>
+                    </h3>
+                    <div class="panel-content" data-content="playback" style="display: none;">
+                        <p id="file-name-display">No file loaded</p>
+                        <button id="play-pause-button">PLAY</button>
+                        <button id="reset-zoom-button" style="margin-top: 0.5rem;">Reset View</button>
+                        <div class="form-group" data-tooltip="Adjust audio playback speed.">
+                            <label for="playback-speed">Playback Speed: <span id="playback-speed-value">1.0</span>x</label>
+                            <input type="range" id="playback-speed" min="0.25" max="2.0" value="1.0" step="0.25">
+                        </div>
                     </div>
                 </div>
-                <div class="grid-panel panel-tuning">
-                    <h3>TUNING</h3>
+                <div class="grid-panel panel-tuning collapsible-panel collapsed">
+                    <h3 class="panel-header" data-panel="tuning">
+                        <span class="panel-title">TUNING</span>
+                        <span class="panel-toggle">▶</span>
+                    </h3>
+                    <div class="panel-content" data-content="tuning" style="display: none;">
                     <div class="form-group" data-tooltip="Manually override the detected Words Per Minute.">
                         <label for="wpm-slider">WPM (Dot Length): <span id="wpm-slider-value">--</span></label>
                         <input type="range" id="wpm-slider" min="5" max="40" value="20" step="1" disabled>
@@ -91,6 +116,77 @@
                     <div class="form-group" data-tooltip="Set the target frequency for the tone detection algorithm.">
                         <label for="frequency-input">Target Frequency (Hz)</label>
                         <input type="number" id="frequency-input" value="700" step="1" disabled>
+                    </div>
+                    </div>
+                </div>
+                <div class="grid-panel panel-preprocessing collapsible-panel collapsed">
+                    <h3 class="panel-header" data-panel="preprocessing">
+                        <span class="panel-title">AUDIO PREPROCESSING</span>
+                        <span class="panel-toggle">▶</span>
+                    </h3>
+                    <div class="panel-content" data-content="preprocessing">
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="preprocess-enabled"> Enable Preprocessing
+                        </label>
+                    </div>
+                    <div id="preprocessing-options" style="display: none;">
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="remove-dc" checked> Remove DC Offset
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="apply-highpass"> High-Pass Filter
+                            </label>
+                            <label for="highpass-cutoff" style="font-size: 0.75rem; margin-top: 0.25rem;">Cutoff: <span id="highpass-cutoff-value">50</span> Hz</label>
+                            <input type="range" id="highpass-cutoff" min="20" max="200" value="50" step="10" style="width: 100%;">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="apply-bandpass"> Band-Pass Filter
+                            </label>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.25rem;">
+                                <div>
+                                    <label for="bandpass-low" style="font-size: 0.75rem;">Low: <span id="bandpass-low-value">300</span> Hz</label>
+                                    <input type="range" id="bandpass-low" min="100" max="1000" value="300" step="50">
+                                </div>
+                                <div>
+                                    <label for="bandpass-high" style="font-size: 0.75rem;">High: <span id="bandpass-high-value">1500</span> Hz</label>
+                                    <input type="range" id="bandpass-high" min="500" max="3000" value="1500" step="100">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="apply-notch"> Notch Filter (60Hz)</label>
+                            <label for="notch-freq" style="font-size: 0.75rem; margin-top: 0.25rem;">Frequency: <span id="notch-freq-value">60</span> Hz</label>
+                            <input type="range" id="notch-freq" min="50" max="60" value="60" step="1" style="width: 100%;">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="apply-lowpass"> Low-Pass Filter
+                            </label>
+                            <label for="lowpass-cutoff" style="font-size: 0.75rem; margin-top: 0.25rem;">Cutoff: <span id="lowpass-cutoff-value">2000</span> Hz</label>
+                            <input type="range" id="lowpass-cutoff" min="1000" max="5000" value="2000" step="100" style="width: 100%;">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="noise-reduction"> Noise Reduction
+                            </label>
+                            <label for="noise-reduction-db" style="font-size: 0.75rem; margin-top: 0.25rem;">Reduction: <span id="noise-reduction-db-value">6.0</span> dB</label>
+                            <input type="range" id="noise-reduction-db" min="0" max="20" value="6" step="1" style="width: 100%;">
+                        </div>
+                        <div class="form-group">
+                            <label for="normalize">Normalize:</label>
+                            <select id="normalize" style="width: 100%; margin-top: 0.25rem;">
+                                <option value="peak" selected>Peak Normalization</option>
+                                <option value="rms">RMS Normalization</option>
+                                <option value="">None</option>
+                            </select>
+                        </div>
+                    </div>
                     </div>
                 </div>
             </div>

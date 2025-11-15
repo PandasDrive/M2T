@@ -81,7 +81,7 @@ def goertzel_mag(frames, sample_rate, target_freq):
     # Return the squared magnitude (power)
     return real**2 + imag**2
 
-def process_audio_file(filepath, wpm_override=None, threshold_factor=1.0, frequency_override=None):
+def process_audio_file(filepath, wpm_override=None, threshold_factor=1.0, frequency_override=None, preprocess_config=None):
     # --- 1. Find Peak Frequency using FFT ---
     # This gives us a much better starting point than a hardcoded frequency
     try:
