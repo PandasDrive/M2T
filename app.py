@@ -1,10 +1,12 @@
 import os
+import json
 from flask import Flask, render_template, request, jsonify, send_from_directory, Response
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import morse_processor  # This is our custom logic file
 import audio_preprocessor  # Audio preprocessing module
 import export_utils  # Export utilities
+from models import db, AudioFile, DecodeResult, Session
 
 # --- Configuration ---
 UPLOAD_FOLDER = 'uploads'
@@ -17,11 +19,20 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['GENERATED_FOLDER'] = GENERATED_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB max upload size
 app.config['TEMP_FOLDER'] = TEMP_FOLDER
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///m2t_analysis.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize database
+db.init_app(app)
 
 # --- Ensure directories exist ---
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(GENERATED_FOLDER, exist_ok=True)
 os.makedirs(TEMP_FOLDER, exist_ok=True)
+
+# Create database tables
+with app.app_context():
+    db.create_all()
 
 def allowed_file(filename):
     """Checks if the uploaded file has an allowed extension."""
@@ -187,6 +198,117 @@ def translate_from_audio():
 def serve_uploaded_file(filename):
     """Serves files from the UPLOAD_FOLDER."""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# --- ---
+# == Batch Processing Routes ==
+# --- ---
+
+@app.route('/batch-upload', methods=['POST'])
+def batch_upload():
+    """Handle batch file upload"""
+    if 'files[]' not in request.files:
+        return jsonify({'error': 'No files provided'}), 400
+    
+    files = request.files.getlist('files[]')
+    uploaded_files = []
+    
+    for file in files:
+        if file and file.filename and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            
+            # Check if file already exists, append number if needed
+            base_name, ext = os.path.splitext(filename)
+            counter = 1
+            while os.path.exists(filepath):
+                filename = f"{base_name}_{counter}{ext}"
+                filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                counter += 1
+            
+            file.save(filepath)
+            uploaded_files.append({
+                'filename': filename,
+                'filepath': filepath,
+                'original_filename': file.filename
+            })
+    
+    return jsonify({
+        'success': True,
+        'files': uploaded_files,
+        'count': len(uploaded_files)
+    })
+
+@app.route('/batch-process', methods=['POST'])
+def batch_process():
+    """Process multiple files in batch"""
+    try:
+        data = request.get_json()
+        file_ids = data.get('file_ids', [])
+        config = data.get('config', {})
+        
+        from batch_processor import process_file_batch
+        
+        results = []
+        for file_info in file_ids:
+            filepath = file_info.get('filepath')
+            original_filename = file_info.get('original_filename')
+            
+            if not os.path.exists(filepath):
+                results.append({
+                    'success': False,
+                    'filename': original_filename,
+                    'error': 'File not found'
+                })
+                continue
+            
+            result = process_file_batch(
+                filepath,
+                original_filename,
+                app.config['UPLOAD_FOLDER'],
+                app.config['TEMP_FOLDER'],
+                config
+            )
+            results.append(result)
+        
+        # Summary statistics
+        successful = sum(1 for r in results if r['success'])
+        failed = len(results) - successful
+        avg_quality = sum(r.get('data', {}).get('quality_score', 0) for r in results if r['success'])
+        if successful > 0:
+            avg_quality /= successful
+        
+        return jsonify({
+            'success': True,
+            'results': results,
+            'summary': {
+                'total': len(results),
+                'successful': successful,
+                'failed': failed,
+                'average_quality': avg_quality
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/batch-status', methods=['GET'])
+def batch_status():
+    """Get batch processing status"""
+    try:
+        processed_count = AudioFile.query.filter_by(processed=True).count()
+        total_count = AudioFile.query.count()
+        
+        recent_results = DecodeResult.query.order_by(DecodeResult.timestamp.desc()).limit(10).all()
+        
+        return jsonify({
+            'processed': processed_count,
+            'total': total_count,
+            'recent_results': [r.to_dict() for r in recent_results]
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/generated/<filename>')
 def serve_generated_file(filename):
