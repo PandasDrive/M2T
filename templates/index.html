@@ -8,59 +8,80 @@
 </head>
 <body>
     <header>
-        <h1>Morse Code Processor</h1>
+        <h1>M2T // Morse Code Decoder</h1>
     </header>
     
     <main class="container">
         
-        <section class="card">
-            <h2>Morse to Text Decoder</h2>
-            <div class="form-group">
-                <label for="file-input">Upload .wav File:</label>
-                <input type="file" id="file-input" accept=".wav">
-            </div>
-            <button id="translate-button">Translate Audio</button>
-            
-            <div id="morse-to-text-results" class="results-area hidden">
-                <h3>Translation Results</h3>
-                
-                <div class="player-container">
-                    <p><strong>Playing file:</strong> <span id="file-name-display"></span></p>
-                    <audio id="uploaded-audio-player" controls></audio>
+        <section class="card decoder-grid">
+            <!-- PANEL 1: CONTROLS -->
+            <div class="grid-panel panel-controls">
+                <h3>CONTROLS</h3>
+                <div class="form-group">
+                    <label for="file-input">1. LOAD AUDIO FILE (.wav)</label>
+                    <input type="file" id="file-input" accept=".wav">
                 </div>
-
-                <p><strong>Detected Speed:</strong> <span id="wpm-display">0</span> WPM</p>
-                
-                <div class="live-display">
-                    <div id="visualizer-placeholder">
-                        <canvas id="waveform-canvas"></canvas>
-                    </div>
-                    <div id="live-char-display" class="live-char">
-                        </div>
-                </div>
-                
-                <div class="summary-area">
-                    <h4>Full Translated Text:</h4>
-                    <div id="summary-text" class="summary-box">
-                        </div>
-                </div>
-                
+                <button id="translate-button" disabled>2. DECODE</button>
                 <p id="morse-to-text-error" class="error-message"></p>
+            </div>
+
+            <!-- PANEL 2: DATA -->
+            <div class="grid-panel panel-data">
+                <h3>DECODED DATA</h3>
+                <div class="data-metrics">
+                    <div class="metric-item" data-tooltip="Words Per Minute, estimated from dot length.">
+                        <span class="metric-value" id="wpm-display">--</span>
+                        <span class="metric-label">WPM</span>
+                    </div>
+                    <div class="metric-item" data-tooltip="The currently decoded character.">
+                        <span class="metric-value live-char" id="live-char-display">_</span>
+                        <span class="metric-label">LIVE</span>
+                    </div>
+                </div>
+                <div class="summary-area">
+                    <label for="summary-text">FULL TRANSCRIPTION</label>
+                    <div id="summary-text" class="summary-box">Awaiting audio file...</div>
+                </div>
+            </div>
+
+            <!-- PANEL 3: VISUALIZATION -->
+            <div class="grid-panel panel-viz">
+                <div class="viz-header">
+                    <h3>VISUALIZATION</h3>
+                    <div class="form-group-toggle" data-tooltip="Toggle raw on/off signal view.">
+                        <label for="advanced-view-toggle">Advanced View</label>
+                        <input type="checkbox" id="advanced-view-toggle" class="toggle-switch">
+                    </div>
+                </div>
+                <canvas id="waveform-canvas"></canvas>
+                <canvas id="binary-signal-canvas" class="hidden"></canvas>
+            </div>
+
+            <!-- PANEL 4: PLAYBACK -->
+            <div class="grid-panel panel-playback">
+                <h3>PLAYBACK</h3>
+                <p id="file-name-display">No file loaded</p>
+                <audio id="uploaded-audio-player" controls></audio>
+                <div class="form-group" data-tooltip="Adjust audio playback speed.">
+                    <label for="playback-speed">Playback Speed: <span id="playback-speed-value">1.0</span>x</label>
+                    <input type="range" id="playback-speed" min="0.25" max="2.0" value="1.0" step="0.25">
+                </div>
             </div>
         </section>
 
         <details class="card">
-            <summary><h2>Text to Morse Generator (for Testing)</h2></summary>
-            <div class="form-group">
-                <label for="text-input">Enter Text:</label>
-                <textarea id="text-input" rows="4" placeholder="Hello world"></textarea>
-            </div>
-            <button id="generate-button">Generate Audio</button>
-            
-            <div id="text-to-morse-results" class="results-area hidden">
-                <h3>Generated Audio:</h3>
-                <audio id="generated-audio-player" controls></audio>
-                <p id="text-to-morse-error" class="error-message"></p>
+            <summary><h2>Test Signal Generator</h2></summary>
+            <div class="generator-content">
+                <div class="form-group">
+                    <label for="text-input">Enter Text:</label>
+                    <textarea id="text-input" rows="3" placeholder="HELLO WORLD"></textarea>
+                </div>
+                <button id="generate-button">Generate Audio</button>
+                <div id="text-to-morse-results" class="results-area hidden">
+                    <p>Generated Audio:</p>
+                    <audio id="generated-audio-player" controls></audio>
+                    <p id="text-to-morse-error" class="error-message"></p>
+                </div>
             </div>
         </details>
 
@@ -68,7 +89,7 @@
     
     <div id="loading-spinner" class="spinner-overlay hidden">
         <div class="spinner"></div>
-        <p>Processing audio...</p>
+        <p>ANALYZING AUDIO...</p>
     </div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>

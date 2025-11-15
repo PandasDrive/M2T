@@ -243,6 +243,6 @@ def process_audio_file(filepath):
         'full_text': decoded_text.strip(),
         'wpm': round(wpm, 1),
         'events': timestamped_events,
-        'spectrogram_data': spectrogram_data # This is a placeholder for now
-        # 'binary_signal_data': binary_signal.tolist()[::100] # Also for debugging
+        'spectrogram_data': spectrogram_data, # This is a placeholder for now
+        'binary_signal_data': binary_signal.tolist()[::100] # Also for debugging
     }

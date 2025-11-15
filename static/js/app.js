@@ -1,90 +1,70 @@
 document.addEventListener('DOMContentLoaded', () => {
-
-    // --- Common Elements ---
+    // --- Main Application Elements ---
+    const fileInput = document.getElementById('file-input');
+    const translateButton = document.getElementById('translate-button');
+    const morseToTextError = document.getElementById('morse-to-text-error');
     const loadingSpinner = document.getElementById('loading-spinner');
-    loadingSpinner.style.display = 'none'; // Force hide on load
 
-    // --- Text-to-Morse Elements ---
+    // --- Data Panel Elements ---
+    const wpmDisplay = document.getElementById('wpm-display');
+    const liveCharDisplay = document.getElementById('live-char-display');
+    const summaryText = document.getElementById('summary-text');
+
+    // --- Visualization Panel Elements ---
+    const advancedViewToggle = document.getElementById('advanced-view-toggle');
+    const waveformCanvas = document.getElementById('waveform-canvas');
+    const binarySignalCanvas = document.getElementById('binary-signal-canvas');
+    const wfCtx = waveformCanvas.getContext('2d');
+    const bsCtx = binarySignalCanvas.getContext('2d');
+
+    // --- Playback Panel Elements ---
+    const fileNameDisplay = document.getElementById('file-name-display');
+    const uploadedAudioPlayer = document.getElementById('uploaded-audio-player');
+    const playbackSpeed = document.getElementById('playback-speed');
+    const playbackSpeedValue = document.getElementById('playback-speed-value');
+
+    // --- Generator Elements ---
     const textInput = document.getElementById('text-input');
     const generateButton = document.getElementById('generate-button');
     const textToMorseResults = document.getElementById('text-to-morse-results');
     const generatedAudioPlayer = document.getElementById('generated-audio-player');
     const textToMorseError = document.getElementById('text-to-morse-error');
 
-    // --- Morse-to-Text Elements ---
-    const fileInput = document.getElementById('file-input');
-    const translateButton = document.getElementById('translate-button');
-    const morseToTextResults = document.getElementById('morse-to-text-results');
-    const uploadedAudioPlayer = document.getElementById('uploaded-audio-player');
-    const fileNameDisplay = document.getElementById('file-name-display');
-    const liveCharDisplay = document.getElementById('live-char-display');
-    const summaryText = document.getElementById('summary-text');
-    const morseToTextError = document.getElementById('morse-to-text-error');
-    const canvas = document.getElementById('waveform-canvas');
-    const ctx = canvas.getContext('2d');
-    const wpmDisplay = document.getElementById('wpm-display');
-
-
     // --- State Variables ---
-    let translationEvents = []; // Stores [{'time': 0.5, 'char': 'S'}, ...]
+    let translationEvents = [];
+    let binarySignalData = [];
     let currentEventIndex = 0;
     let audioContext;
     let audioBuffer;
-    let audioSource;
 
-    // --- ---
-    // == Part 1: Text-to-Morse (Generator) ==
-    // --- ---
+    // --- Initial UI State ---
+    loadingSpinner.style.display = 'none';
+    translateButton.disabled = true;
 
-    generateButton.addEventListener('click', async () => {
-        const text = textInput.value;
-        if (!text) {
-            showError(textToMorseError, 'Please enter some text to generate.');
-            return;
-        }
+    // --- EVENT LISTENERS ---
 
-        showLoading(true);
-        hideError(textToMorseError);
-        textToMorseResults.classList.add('hidden');
-
-        try {
-            const response = await fetch('/translate-to-morse', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text })
-            });
-
-            const data = await response.json();
-
-            if (response.ok) {
-                generatedAudioPlayer.src = data.filepath;
-                generatedAudioPlayer.load();
-                textToMorseResults.classList.remove('hidden');
-            } else {
-                showError(textToMorseError, data.error || 'An unknown error occurred.');
-            }
-
-        } catch (error) {
-            showError(textToMorseError, `Network error: ${error.message}`);
-        } finally {
-            showLoading(false);
+    // Enable Decode button only when a file is selected
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            translateButton.disabled = false;
+            fileNameDisplay.textContent = fileInput.files[0].name;
+            summaryText.textContent = 'File loaded. Press "DECODE" to analyze.';
+        } else {
+            translateButton.disabled = true;
+            fileNameDisplay.textContent = 'No file loaded';
         }
     });
 
-    // --- ---
-    // == Part 2: Morse-to-Text (Decoder) ==
-    // --- ---
-
+    // Main Decode button action
     translateButton.addEventListener('click', async () => {
         const file = fileInput.files[0];
         if (!file) {
-            showError(morseToTextError, 'Please select a .wav file to translate.');
+            showError(morseToTextError, 'Please select a .wav file.');
             return;
         }
 
         showLoading(true);
         hideError(morseToTextError);
-        morseToTextResults.classList.add('hidden');
         resetTranslationUI();
 
         const formData = new FormData();
@@ -94,180 +74,148 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/translate-from-audio', {
                 method: 'POST',
                 body: formData
-                // No 'Content-Type' header, browser sets it for FormData
             });
 
             const data = await response.json();
             
             if (response.ok) {
-                // Store results
+                // Store results from backend
                 translationEvents = data.events || [];
-                
-                // Display static results
+                binarySignalData = data.binary_signal_data || [];
+
+                // Populate UI
                 summaryText.textContent = data.full_text || '[No text decoded]';
-                fileNameDisplay.textContent = file.name;
-                wpmDisplay.textContent = data.wpm || '0';
-                
-                // Load the audio for playback
+                wpmDisplay.textContent = data.wpm || '--';
                 uploadedAudioPlayer.src = data.filepath;
                 uploadedAudioPlayer.load();
 
-                // Load audio data for visualization
+                // Prepare for visualization
                 await loadAudioForVisualization(data.filepath);
+                drawBinarySignal();
 
-                // Show the results area
-                morseToTextResults.classList.remove('hidden');
             } else {
                 showError(morseToTextError, data.error || 'An unknown error occurred.');
+                summaryText.textContent = `Error: ${data.error || 'An unknown error occurred.'}`;
             }
 
         } catch (error) {
             showError(morseToTextError, `Network error: ${error.message}`);
+            summaryText.textContent = `Network error: ${error.message}`;
         } finally {
             showLoading(false);
         }
     });
 
-    /**
-     * Resets the translation UI to its default state
-     */
-    function resetTranslationUI() {
-        summaryText.textContent = '';
-        liveCharDisplay.textContent = '';
-        fileNameDisplay.textContent = '';
-        wpmDisplay.textContent = '0';
-        uploadedAudioPlayer.src = '';
-        translationEvents = [];
-        currentEventIndex = 0;
-        ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
-    }
-
-    // --- Live Playback and Visualization ---
-
-    /**
-     * When the user plays the uploaded audio, start the live-display loop.
-     */
+    // Playback starts the animation loop
     uploadedAudioPlayer.addEventListener('play', () => {
         currentEventIndex = 0;
-        liveCharDisplay.textContent = ''; // Clear display on play
-        requestAnimationFrame(updateLiveDisplay); // Start the animation loop
-        drawWaveform(); // Draw the static waveform
+        liveCharDisplay.textContent = '_';
+        summaryText.textContent = ''; // Clear summary on play to rebuild it live
+        requestAnimationFrame(updateLiveDisplay);
     });
 
+    // Playback speed control
+    playbackSpeed.addEventListener('input', () => {
+        const speed = parseFloat(playbackSpeed.value);
+        playbackSpeedValue.textContent = speed.toFixed(2);
+        uploadedAudioPlayer.playbackRate = speed;
+    });
+
+    // Advanced view toggle
+    advancedViewToggle.addEventListener('change', () => {
+        waveformCanvas.classList.toggle('hidden', advancedViewToggle.checked);
+        binarySignalCanvas.classList.toggle('hidden', !advancedViewToggle.checked);
+    });
+
+    // --- Generator Logic ---
+    generateButton.addEventListener('click', async () => {
+        // (This logic remains largely the same)
+        const text = textInput.value;
+        if (!text) {
+            showError(textToMorseError, 'Please enter some text.');
+            return;
+        }
+        textToMorseResults.classList.add('hidden');
+        hideError(textToMorseError);
+        try {
+            const response = await fetch('/translate-to-morse', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: text })
+            });
+            const data = await response.json();
+            if (response.ok) {
+                generatedAudioPlayer.src = data.filepath;
+                generatedAudioPlayer.load();
+                textToMorseResults.classList.remove('hidden');
+            } else {
+                showError(textToMorseError, data.error || 'An unknown error occurred.');
+            }
+        } catch (error) {
+            showError(textToMorseError, `Network error: ${error.message}`);
+        }
+    });
+
+
+    // --- CORE FUNCTIONS ---
+
+    function resetTranslationUI() {
+        summaryText.textContent = 'Awaiting audio file...';
+        liveCharDisplay.textContent = '_';
+        wpmDisplay.textContent = '--';
+        uploadedAudioPlayer.src = '';
+        playbackSpeed.value = 1.0;
+        playbackSpeedValue.textContent = '1.00';
+        uploadedAudioPlayer.playbackRate = 1.0;
+        translationEvents = [];
+        binarySignalData = [];
+        currentEventIndex = 0;
+        drawWaveform(); // Draw empty state
+        drawBinarySignal(); // Draw empty state
+    }
+
     /**
-     * This is the core loop that runs during audio playback.
-     * It checks the audio's currentTime against the event timestamps.
+     * The main animation loop that runs during audio playback.
      */
     function updateLiveDisplay() {
-        // Stop the loop if audio is paused or ended
         if (uploadedAudioPlayer.paused || uploadedAudioPlayer.ended) {
+            liveCharDisplay.textContent = '■'; // Stop symbol
             return;
         }
 
         const currentTime = uploadedAudioPlayer.currentTime;
 
-        // Check if the next event's time has been reached
+        // Update live character display
         if (currentEventIndex < translationEvents.length) {
             const nextEvent = translationEvents[currentEventIndex];
-            
             if (currentTime >= nextEvent.time) {
-                // --- This is the "live" update logic ---
-                
-                // 1. Show the character in the "live" display
                 showLiveCharacter(nextEvent.char);
-                
-                // 2. Add the character to the *bottom* summary (as requested)
-                // We'll just re-set it from the events list for simplicity
                 updateSummaryFromEvents(currentEventIndex + 1);
-                
-                // 3. Move to the next event
                 currentEventIndex++;
             }
         }
         
-        // Update the playback scrubber/cursor on the waveform
+        // Redraw visualizations with playhead
         drawWaveform(currentTime);
+        drawBinarySignal(currentTime);
 
-        // Continue the loop
         requestAnimationFrame(updateLiveDisplay);
     }
-    
-    /**
-     * Rebuilds the summary text from the event list up to a certain index
-     */
+
+    function showLiveCharacter(char) {
+        liveCharDisplay.textContent = char;
+    }
+
     function updateSummaryFromEvents(index) {
-        let text = "";
-        for (let i = 0; i < index; i++) {
-            text += translationEvents[i].char;
-            // Add a space if the *next* event is a space (from " / ")
-            // This logic is tricky; just appending is easier.
-            // Let's stick to the simpler logic for now:
-        }
-        
-        // A simpler way: just append.
-        // We will pre-fill the summary box on load, and this
-        // function will just be for showing the *live* character.
-        // The user's request was complex, let's simplify:
-        // 1. On load: Full text appears in summary box.
-        // 2. On play: Live character appears in `liveCharDisplay` at the right time.
-        
-        // Let's re-read the prompt:
-        // "I'd like the letter...to be showing up...and then moves down and then gets added to the summary on the bottom."
-        
-        // OK, that implies the summary box should *also* build live.
-        // Let's adjust the logic.
-        
-        // 1. On load, summary box is EMPTY.
-        // 2. On play, `updateLiveDisplay` calls this.
-        
-        // Let's reset the logic.
-        
-        // On `translateButton` click (in `try` block):
-        // `summaryText.textContent = '';` // Clear summary on load
-        // `uploadedAudioPlayer.load();`
-        
-        // On `uploadedAudioPlayer.addEventListener('play', ...)`
-        // `summaryText.textContent = '';` // Clear summary on *play*
-        
-        // This function will now build the summary string
         let summaryString = "";
         for(let i=0; i < index; i++) {
              summaryString += translationEvents[i].char;
-             // This needs to handle word spaces ('/') from the processor
-             // Assuming the processor returns " " for word spaces...
         }
         summaryText.textContent = summaryString;
     }
-    
-    // We need to clear the summary on play
-    uploadedAudioPlayer.addEventListener('play', () => {
-        currentEventIndex = 0;
-        liveCharDisplay.textContent = ''; // Clear display on play
-        summaryText.textContent = '';     // Clear summary on play
-        requestAnimationFrame(updateLiveDisplay); // Start the animation loop
-    });
 
+    // --- VISUALIZATION FUNCTIONS ---
 
-    /**
-     * Shows a character in the live display box with a fade-out effect.
-     */
-    function showLiveCharacter(char) {
-        liveCharDisplay.textContent = char;
-        liveCharDisplay.style.opacity = 1;
-
-        // Fade out after a short duration
-        setTimeout(() => {
-            liveCharDisplay.style.opacity = 0;
-        }, 800); // 800ms visibility
-    }
-
-    // --- ---
-    // == Audio Visualization (Waveform) ==
-    // --- ---
-    
-    /**
-     * Loads audio file into an AudioBuffer for analysis
-     */
     async function loadAudioForVisualization(url) {
         try {
             if (!audioContext) {
@@ -276,81 +224,93 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(url);
             const arrayBuffer = await response.arrayBuffer();
             audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            drawWaveform(); // Draw initial waveform
+            drawWaveform();
         } catch (e) {
             console.error('Error loading audio for visualization:', e);
-            showError(morseToTextError, 'Could not load audio visualizer.');
+            showError(morseToTextError, 'Could not load audio for visualization.');
         }
     }
 
-    /**
-     * Draws the waveform and the current playhead position
-     */
     function drawWaveform(currentTime = 0) {
-        if (!audioBuffer) {
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#555';
-            ctx.font = '14px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('Waveform preview', canvas.width / 2, canvas.height / 2);
-            return;
-        }
+        const width = waveformCanvas.width;
+        const height = waveformCanvas.height;
+        wfCtx.fillStyle = '#111827'; // Background
+        wfCtx.fillRect(0, 0, width, height);
 
-        const data = audioBuffer.getChannelData(0); // Get data from channel 0
-        const width = canvas.width;
-        const height = canvas.height;
+        if (!audioBuffer) return;
+
+        const data = audioBuffer.getChannelData(0);
         const step = Math.ceil(data.length / width);
-        const amp = height / 2; // Amplitude
+        const amp = height / 2;
 
-        ctx.fillStyle = '#000'; // Background
-        ctx.fillRect(0, 0, width, height);
-        ctx.strokeStyle = '#e94560'; // Waveform color
-        ctx.lineWidth = 1;
-        ctx.beginPath();
+        wfCtx.strokeStyle = '#38BDF8'; // Waveform color
+        wfCtx.lineWidth = 1;
+        wfCtx.beginPath();
         
-        let x = 0;
-        for (let i = 0; i < data.length; i += step) {
+        for (let i = 0; i < width; i++) {
             let min = 1.0;
             let max = -1.0;
             for (let j = 0; j < step; j++) {
-                if (data[i + j] < min) min = data[i + j];
-                if (data[i + j] > max) max = data[i + j];
+                const datum = data[(i * step) + j];
+                if (datum < min) min = datum;
+                if (datum > max) max = datum;
             }
-            ctx.moveTo(x, (1 + min) * amp);
-            ctx.lineTo(x, (1 + max) * amp);
-            x++;
+            wfCtx.moveTo(i, (1 + min) * amp);
+            wfCtx.lineTo(i, (1 + max) * amp);
         }
-        ctx.stroke();
+        wfCtx.stroke();
         
         // Draw playhead
         if (currentTime > 0) {
             const playheadX = (currentTime / audioBuffer.duration) * width;
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'; // Playhead color
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(playheadX, 0);
-            ctx.lineTo(playheadX, height);
-            ctx.stroke();
+            wfCtx.strokeStyle = 'rgba(249, 250, 251, 0.75)'; // Playhead color
+            wfCtx.lineWidth = 2;
+            wfCtx.beginPath();
+            wfCtx.moveTo(playheadX, 0);
+            wfCtx.lineTo(playheadX, height);
+            wfCtx.stroke();
         }
     }
 
+    function drawBinarySignal(currentTime = 0) {
+        const width = binarySignalCanvas.width;
+        const height = binarySignalCanvas.height;
+        bsCtx.fillStyle = '#111827'; // Background
+        bsCtx.fillRect(0, 0, width, height);
 
-    // --- ---
-    // == Utility Functions ==
-    // --- ---
+        if (binarySignalData.length === 0) return;
 
+        const step = width / binarySignalData.length;
+        bsCtx.fillStyle = '#38BDF8'; // "On" color
+
+        for (let i = 0; i < binarySignalData.length; i++) {
+            if (binarySignalData[i] === 1) {
+                bsCtx.fillRect(i * step, 0, step, height);
+            }
+        }
+
+        // Draw playhead
+        if (currentTime > 0 && audioBuffer) {
+            const playheadX = (currentTime / audioBuffer.duration) * width;
+            bsCtx.strokeStyle = 'rgba(249, 250, 251, 0.75)'; // Playhead color
+            bsCtx.lineWidth = 2;
+            bsCtx.beginPath();
+            bsCtx.moveTo(playheadX, 0);
+            bsCtx.lineTo(playheadX, height);
+            bsCtx.stroke();
+        }
+    }
+
+    // --- UTILITY FUNCTIONS ---
     function showLoading(isLoading) {
-        loadingSpinner.classList.toggle('hidden', !isLoading);
+        loadingSpinner.style.display = isLoading ? 'flex' : 'none';
     }
 
     function showError(element, message) {
         element.textContent = message;
-        element.classList.remove('hidden');
     }
 
     function hideError(element) {
         element.textContent = '';
-        element.classList.add('hidden');
     }
 });
