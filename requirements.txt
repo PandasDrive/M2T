@@ -1,7 +1,9 @@
 flask
+flask-sqlalchemy
 numpy
 scipy
 librosa
 pydub
 matplotlib
 soundfile
+pandas

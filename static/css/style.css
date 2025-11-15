@@ -161,6 +161,23 @@ header {
 }
 #spectrogram-container { height: 300px; margin-top: 0.5rem; }
 
+#waterfall-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    text-align: center;
+}
+
+#waterfall-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    margin: 0 auto;
+    max-width: 100%;
+}
+
 /* --- SIDEBAR PANELS --- */
 .data-metrics { display: flex; justify-content: space-around; margin-bottom: 1.5rem; }
 .metric-item { text-align: center; }
