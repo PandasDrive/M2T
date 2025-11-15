@@ -170,29 +170,15 @@ button:disabled {
 }
 
 /* --- VIZ & PLAYBACK PANELS --- */
-.viz-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-}
-
-.viz-header h3 {
-    margin-bottom: 0;
-    border-bottom: none;
-}
-
-canvas {
+#waveform-container {
     width: 100%;
-    height: 100px;
-    background-color: #000;
-    border-radius: 4px;
-    border: 1px solid var(--secondary-color);
+    height: 128px; /* Default height for the waveform */
 }
 
-#binary-signal-canvas {
-    height: 40px;
-    margin-top: 1px;
+#spectrogram-container {
+    width: 100%;
+    height: 128px; /* Default height for the spectrogram */
+    margin-top: 1rem;
 }
 
 audio {
